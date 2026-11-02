@@ -42,7 +42,8 @@ class QOJ:
 
     def prepare(self) -> Contest:
         soup = self._page()
-        titles = [h.get_text(" ", strip=True) for h in soup.select("h1")]
+        headings = soup.select(".uoj-content h1") or soup.select("h1")
+        titles = [h.get_text(" ", strip=True) for h in headings]
         titles.extend(a.get_text(" ", strip=True) for a in soup.select('a[href*="?v="]'))
         text = soup.get_text(" ", strip=True)
         if "Ruleset: ICPC" not in text:
@@ -88,7 +89,8 @@ class QOJ:
             # A small number of contests use individual problem attachments.
             for label, pid in problem_map.items():
                 p = self._page(f"/problem/{pid}")
-                link = p.select_one('a[href$=".pdf"], iframe[src*=".pdf"], object[data*=".pdf"]')
+                link = p.select_one('a[href$=".pdf"], iframe[src*=".pdf"], object[data*=".pdf"], '
+                                    'iframe[src*="download.php"][src*="type=statement"]')
                 if link:
                     pdfs[f"{label}.pdf"] = urljoin(self.url, link.get("href") or link.get("src") or link.get("data"))
         if not pdfs:

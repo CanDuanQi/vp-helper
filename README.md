@@ -2,7 +2,7 @@
 
 Ubuntu 上的 XCPC 虚拟参赛终端助手，支持 QOJ、Codeforces ICPC 比赛和 Codeforces Gym。上方显示成绩与完整提交记录，下方保留比赛目录中的普通 shell。
 
-当前版本：0.1.16+cdq.1（CanDuanQi 修改版，基于上游 0.1.16）。
+当前版本：0.1.16+cdq.2（CanDuanQi 修改版，基于上游 0.1.16）。
 
 ## 本 Fork 的修改
 
@@ -11,6 +11,7 @@ Ubuntu 上的 XCPC 虚拟参赛终端助手，支持 QOJ、Codeforces ICPC 比�
 - QOJ、Codeforces 和 Gym 以平台确认的 **ICPC 计分规则**为准，不再要求标题带有年份、赛站和 Reg/Inv/Pro。CF / IOI 计分仍会拒绝；平台原生 VP、赛长和可下载的 PDF 题面要求沿用原逻辑。
 - 正式 ICPC / CCPC 标准赛事仍采用原目录名称和原赛校验、回放、实时排名、奖项、封榜及题号揭示机制。
 - 非标准赛事目录采用“平台 ID 标题”，例如 `QOJ 2565 比赛标题`，清理路径分隔符等特殊字符并限制长度；不同 ID 不会因同名比赛而共用提交配置。题面下载、`contest.json`、个人 ICPC 成绩、提交记录及补题标记沿用原有流程。
+- QOJ 标题优先读取比赛内容区，避免把站点标志 `QOJ.ac` 当成比赛名称。单题 PDF 支持 `download.php?type=statement` 内嵌链接，即使 URL 不含 `.pdf` 也可下载；下载后仍验证 PDF 文件头。
 - 没有可靠原赛数据时，排名与原赛统计显示 `—`，奖项显示 `Unknown`，并保留缺失原因。不会根据标题编造原赛年份、资格、奖牌名额或原赛提交记录。个人成绩及提交记录仍更新。
 - Firefox 自动配置识别新增 `~/.mozilla/firefox-esr/`，兼容 `profiles.ini` 的相对和绝对路径、默认配置及 sudo 原用户识别。
 - 增加 `vp --version` 和无需 sudo 的用户目录安装，方便确认正在使用本 Fork。
@@ -65,7 +66,7 @@ vp --version
 ```bash
 type -a vp submit
 readlink -f "$(command -v vp)"
-vp --version  # VP Helper 0.1.16+cdq.1
+vp --version  # VP Helper 0.1.16+cdq.2
 ```
 
 ## 使用

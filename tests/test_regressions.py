@@ -126,6 +126,29 @@ class AdapterTests(OfflineTest):
         self.assertEqual(c.rules.problem_reveal_count, 50)
         self.assertEqual(archive_path(c), "data/ccpc/12th/changchun")
 
+    def test_qoj_uses_contest_heading_instead_of_site_logo(self):
+        api = self.qoj()
+        page = qoj_page("Winter Practice")
+        page.h1.wrap(page.new_tag("div", attrs={"class": "uoj-content"}))
+        page.insert(0, soup("<h1>QOJ.ac</h1><h1>QOJ</h1>"))
+        listing = soup('<tr><td><a href="/contest/2565">Contest</a></td><td>5 hours</td></tr>')
+        api.web.soup.side_effect = [page, listing]
+        self.assertEqual(api.prepare().name, "QOJ 2565 Winter Practice")
+
+    def test_qoj_embedded_statement_pdf_without_pdf_extension(self):
+        api = self.qoj()
+        page = qoj_page("Winter Practice")
+        page.select_one('a[href*="download.php"]').decompose()
+        listing = soup('<tr><td><a href="/contest/2565">Contest</a></td><td>5 hours</td></tr>')
+        api.web.soup.side_effect = [page, listing,
+            soup('<iframe src="/download.php?type=statement&amp;id=101&amp;contest_id=2565"></iframe>'),
+            soup('<iframe src="/download.php?type=statement&amp;id=205&amp;contest_id=2565"></iframe>')]
+        c = api.prepare()
+        self.assertEqual(c.pdfs, {
+            "A.pdf": "https://qoj.ac/download.php?type=statement&id=101&contest_id=2565",
+            "B.pdf": "https://qoj.ac/download.php?type=statement&id=205&contest_id=2565"})
+        api.web.post.assert_not_called()
+
     def test_qoj_rejects_non_icpc_before_other_preparation(self):
         for title in ("Winter Practice", "2024 ICPC Nanjing Regional"):
             with self.subTest(title=title):
