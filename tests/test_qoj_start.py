@@ -104,7 +104,7 @@ class StartTests(OfflineStartTest):
         script.chmod(0o700)
         api.account["submit_script"] = str(script)
         api.web.pdf.side_effect = lambda url, target: target.write_bytes(b"%PDF-synthetic-test")
-        with patch("vp_helper.cli.adapter", return_value=api), patch("vp_helper.cli.load_account", return_value={}), \
+        with patch("vp_helper.cli.adapter", return_value=api), patch("vp_helper.cli.load_account", return_value={"download_pdfs": True}), \
              patch("vp_helper.cli.desktop", return_value=self.root / "Desktop"), \
              patch("vp_helper.cli.shutil.which", return_value="tmux"), patch("sys.stdin.isatty", return_value=True), \
              patch("vp_helper.cli.tmux_exists", return_value=False), patch("vp_helper.cli.launch") as launch, \

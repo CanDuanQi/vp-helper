@@ -218,7 +218,7 @@ class AdapterTests(OfflineTest):
         c.problems["B"] = "102"
         api.web.pdf.side_effect = lambda url, target: target.write_bytes(b"%PDF-synthetic-test")
         api.start = Mock(side_effect=VPError("offline native-start boundary"))
-        with patch("vp_helper.cli.adapter", return_value=api), patch("vp_helper.cli.load_account", return_value={}), \
+        with patch("vp_helper.cli.adapter", return_value=api), patch("vp_helper.cli.load_account", return_value={"download_pdfs": True}), \
              patch("vp_helper.cli.desktop", return_value=self.root / "Desktop"), \
              patch("vp_helper.cli.shutil.which", return_value="tmux"), patch("sys.stdin.isatty", return_value=True):
             with self.assertRaisesRegex(VPError, "offline native-start boundary"):

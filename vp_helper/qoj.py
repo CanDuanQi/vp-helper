@@ -45,7 +45,7 @@ class QOJ:
     def _page(self, suffix: str = "", **params) -> BeautifulSoup:
         return self.web.soup(self.url + suffix, params={"locale": "en", **params})
 
-    def prepare(self) -> Contest:
+    def prepare(self, *, download_pdfs: bool = True) -> Contest:
         soup = self._page()
         headings = soup.select(".uoj-content h1") or soup.select("h1")
         titles = [h.get_text(" ", strip=True) for h in headings]
@@ -85,12 +85,12 @@ class QOJ:
         if not duration:
             raise VPError("QOJ did not provide the contest duration; a five-hour duration will not be guessed.")
         pdfs = {}
-        for a in soup.select('a[href*="download.php"]'):
+        for a in (soup.select('a[href*="download.php"]') if download_pdfs else []):
             label = a.get_text(" ", strip=True)
             if re.search(r"Statements?\b|题面", label, re.I):
                 suffix = "zh-cn" if "zh" in label else "en"
                 pdfs[f"Statements-{suffix}.pdf"] = urljoin(self.url, a["href"])
-        if not pdfs:
+        if download_pdfs and not pdfs:
             # A small number of contests use individual problem attachments.
             for label, pid in problem_map.items():
                 p = self._page(f"/problem/{pid}")
@@ -98,7 +98,7 @@ class QOJ:
                                     'iframe[src*="download.php"][src*="type=statement"]')
                 if link:
                     pdfs[f"{label}.pdf"] = urljoin(self.url, link.get("href") or link.get("src") or link.get("data"))
-        if not pdfs:
+        if download_pdfs and not pdfs:
             raise VPError("QOJ did not expose a statement PDF for this contest.")
         return Contest("qoj", self.id, self.url, name, name, problem_map,
                        Rules(duration, int(penalty[1]) if penalty else 20,

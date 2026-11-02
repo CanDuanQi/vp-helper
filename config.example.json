@@ -1,4 +1,5 @@
 {
+  "download_pdfs": false,
   "qoj": {
     "handle": "",
     "cookie_source": "firefox",

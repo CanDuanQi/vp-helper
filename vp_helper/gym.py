@@ -68,7 +68,7 @@ class Gym:
             raise VPError("Codeforces API: " + comment)
         return response["result"]
 
-    def prepare(self) -> Contest:
+    def prepare(self, *, download_pdfs: bool = True) -> Contest:
         data = self.api("contest.standings", contestId=self.id, showUnofficial=False, participantTypes="CONTESTANT")
         raw = data["contest"]
         if raw["type"] != "ICPC":
@@ -80,20 +80,20 @@ class Gym:
         names = [raw["name"]] + [h.get_text(" ", strip=True) for h in soup.select("h1,h2")]
         name = directory_name(names, fallback=f"{self.platform.upper()} {self.id}")
         pdfs = {}
-        for a in soup.select("a[href]"):
+        for a in (soup.select("a[href]") if download_pdfs else []):
             label = a.get_text(" ", strip=True)
             href = urljoin(self.url, a["href"])
             if re.search(r"statement|problem.*pdf|题面", label, re.I) and (".pdf" in href.lower() or "attachments" in href):
                 pdfs["Statements.pdf"] = href
                 break
-        if not pdfs:
+        if download_pdfs and not pdfs:
             soup = self.web.soup(self.url + "/attachments", params={"locale": "en"})
             for a in soup.select("a[href]"):
                 href = urljoin(self.url, a["href"])
                 if re.search(r"\.pdf(?:$|\?)", href, re.I) and re.search(r"statement|problem", a.get_text(" ", strip=True), re.I):
                     pdfs["Statements.pdf"] = href
                     break
-        if not pdfs:
+        if download_pdfs and not pdfs:
             for problem in data["problems"]:
                 label = problem["index"]
                 p = self.web.soup(self.url + f"/problem/{label}", params={"locale": "en"})
@@ -102,7 +102,7 @@ class Gym:
                     if re.search(r"\.pdf(?:$|\?)", href, re.I):
                         pdfs[f"{label}.pdf"] = href
                         break
-        if not pdfs:
+        if download_pdfs and not pdfs:
             raise VPError("This Gym does not expose a PDF statement attachment.")
         duration = int(raw["durationSeconds"])
         freeze = raw.get("freezeDurationSeconds")

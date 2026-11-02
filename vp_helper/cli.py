@@ -176,6 +176,19 @@ def launch(state_path: Path, state: dict) -> None:
     attach(name)
 
 
+def pdf_download_enabled(config: dict, *, prompt: bool = True) -> bool:
+    if "download_pdfs" in config:
+        if type(config["download_pdfs"]) is not bool:
+            raise VPError("download_pdfs must be true or false in ~/.config/vp/config.json.")
+        return config["download_pdfs"]
+    if not prompt:
+        return False
+    try:
+        return input("Download problem PDFs? (y/N): ").strip().lower() == "y"
+    except EOFError:
+        return False
+
+
 def prepare_start(url: str) -> tuple[Path, dict]:
     if sys.platform != "linux":
         raise VPError("vp is supported on Ubuntu only.")
@@ -188,13 +201,15 @@ def prepare_start(url: str) -> tuple[Path, dict]:
     state_root.mkdir(parents=True, exist_ok=True, mode=0o700)
     with file_lock(state_root / "start.lock"):
         current = read_json(state_root / "current.json")
+        same_contest = False
         if current:
             old = read_json(Path(current["state_path"]))
+            same_contest = old.get("url") == canonical
             running = (old.get("status") != "complete" and time.time() < old.get("start_time", 0)
                        + old.get("contest", {}).get("rules", {}).get("duration", 0))
             # A reboot removes tmux sessions, but an ongoing VP can still be
             # resumed from its saved state; start() recreates the missing session.
-            if old.get("url") == canonical and (running or tmux_exists(old.get("tmux_session", ""))):
+            if same_contest and (running or tmux_exists(old.get("tmux_session", ""))):
                 # A resumed session still needs a usable local submission file;
                 # refreshing it never starts or resets the native participation.
                 config = load_account(platform)
@@ -210,17 +225,23 @@ def prepare_start(url: str) -> tuple[Path, dict]:
                 raise VPError(f"A native VP is already running: {old.get('url')}. Open that URL to resume it.")
         config = load_account(platform)
         api = adapter(canonical, config)
+        download_pdfs = pdf_download_enabled(config, prompt=not same_contest)
         console.print("Reading contest information…", markup=False)
-        contest = api.prepare()
+        contest = api.prepare(download_pdfs=download_pdfs)
         root = desktop()
         root.mkdir(parents=True, exist_ok=True)
         contest.directory_name = " ".join(contest.directory_name.split())
         directory = root / contest.directory_name
         directory.mkdir(exist_ok=True)
         configure_submit(api, contest, directory)
-        for name, pdf in contest.pdfs.items():
-            console.print("Downloading " + name, markup=False)
-            api.web.pdf(pdf, directory / name)
+        if download_pdfs:
+            for name, pdf in contest.pdfs.items():
+                target = directory / name
+                if target.exists() or target.is_symlink():
+                    console.print("Keeping existing " + name, markup=False)
+                    continue
+                console.print("Downloading " + name, markup=False)
+                api.web.pdf(pdf, target)
         console.print("Starting and verifying native virtual participation…", markup=False)
         started = api.start(contest)
         name = "vp-" + platform + "-" + contest.contest_id + "-" + str(int(started))
