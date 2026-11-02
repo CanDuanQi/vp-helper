@@ -3,7 +3,7 @@ from __future__ import annotations
 from http.cookies import SimpleCookie
 from pathlib import Path
 import time
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 from bs4 import BeautifulSoup
 
@@ -134,12 +134,20 @@ class WebSession:
         # The final iteration always returns or raises; this keeps the flow total.
         raise VPError(f"Connection failed: {host}")  # pragma: no cover
 
-    def post(self, url: str, data: dict):
+    def post(self, url: str, data: dict, *, referer: str | None = None):
         try:
-            # Never retry a native contest start automatically.
-            r = self.session.post(url, data=data, timeout=(10, 40))
+            # A 307/308 must not make the HTTP client replay a start POST.
+            headers = {"Referer": referer} if referer else {}
+            r = self.session.post(url, data=data, headers=headers, timeout=(10, 40), allow_redirects=False)
         except _RequestException:
             raise VPError("The server did not confirm starting the VP. Run the same URL to check the remote state.") from None
+        if r.status_code in (301, 302, 303) and r.headers.get("Location"):
+            target = urljoin(url, r.headers["Location"])
+            if urlsplit(target)[:2] != urlsplit(url)[:2]:
+                raise VPError("The platform returned an unexpected form redirect; the POST was not repeated.")
+            return self.get(target)
+        if r.status_code in (307, 308):
+            raise VPError("The platform requested a POST redirect; it was not followed to avoid starting twice.")
         return self.check(r)
 
     def check(self, r):

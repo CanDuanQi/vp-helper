@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import replace
 from collections import Counter
 from datetime import datetime
+import hashlib
+import json
 import re
 import time
 from urllib.parse import urljoin, urlsplit
@@ -15,6 +17,7 @@ from .models import Cell, Contest, Reference, Rules, Submission, TeamScore, VPEr
 from .originals import OriginalReplay, cache_archive_submissions, classify, eligibility_lookup, identity, load_archive_submissions, load_metadata, lookup_team
 from .parsing import ccpc_reveal_count, directory_name, js_value, medals_from_html, seconds, timestamp
 from .scoring import verdict
+from .storage import read_json, state_directory, write_json
 
 
 class QOJ:
@@ -112,91 +115,168 @@ class QOJ:
         soup = first or self._page("/registrants", show_unofficial="true")
         last = max([1] + [int(m[1]) for a in soup.select("a[href]")
                           if (m := re.search(r"[?&]page=(\d+)", a["href"]))])
+        records, virtual = {}, set()
+        recognized = has_virtual_table = False
         for page in [1] + list(range(last, 1, -1)):
             if page != 1:
                 soup = self._page("/registrants", show_unofficial="true", page=page)
-            has_virtual_table = any(len(table.select("thead th")) == 3 for table in soup.select("table"))
-            records = []
-            for row in soup.select("tr"):
-                cells = row.select("td")
-                if len(cells) not in (3, 5) or has_virtual_table and len(cells) != 3:
+            for table in soup.select("table"):
+                headers = [h.get_text(" ", strip=True).lower() for h in table.select("tr th")]
+                user_col = next((i for i, h in enumerate(headers) if h in ("username", "user", "用户名")), None)
+                start_col = next((i for i, h in enumerate(headers) if h in ("start time", "start", "开始时间")), None)
+                length_col = next((i for i, h in enumerate(headers) if h in ("duration", "length", "时长")), None)
+                if user_col is None:
                     continue
-                user = cells[1].select_one('.uoj-username, a[href*="/user/profile/"]')
-                user_id = urlsplit(user["href"]).path.rsplit("/", 1)[-1] if user and user.get("href") else user.get_text(strip=True) if user else ""
-                if user_id != self.handle:
-                    continue
-                date_cell = cells[2] if len(cells) == 3 else cells[-2]
-                node = date_cell.select_one("time[datetime]")
-                if node:
-                    value = timestamp(node["datetime"])
-                else:
-                    value = timestamp(date_cell.get_text(strip=True))
-                minutes = cells[-1].get_text(strip=True) if len(cells) == 5 else ""
-                length = int(minutes) * 60 if minutes.isdigit() else duration or self._registry_duration(soup)
-                if length and value > timestamp("2000-01-01 00:00:00"):
-                    records.append((value, length))
-            if records:
-                return max(records)
-        return None
+                if start_col is None:
+                    raise VPError("QOJ's registration table start-time column could not be identified.")
+                is_virtual = length_col is None and len(headers) == 3
+                if length_col is None and not is_virtual:
+                    raise VPError("QOJ's registration table duration column could not be identified.")
+                recognized = True
+                has_virtual_table |= is_virtual
+                for row in table.select("tr"):
+                    cells = row.find_all("td", recursive=False)
+                    if len(cells) <= user_col:
+                        continue
+                    user = cells[user_col].select_one('a[href*="/user/profile/"], .uoj-username')
+                    user_id = (urlsplit(user["href"]).path.rsplit("/", 1)[-1] if user and user.get("href")
+                               else user.get_text(strip=True) if user else cells[user_col].get_text(strip=True))
+                    if user_id != self.handle:
+                        continue
+                    if len(cells) <= max(start_col, length_col or 0):
+                        raise VPError("QOJ's account registration row is missing its start time or duration.")
+                    date_cell = cells[start_col]
+                    node = date_cell.select_one("time[datetime]")
+                    value = timestamp(node["datetime"] if node else date_cell.get_text(" ", strip=True))
+                    if value <= timestamp("2000-01-01 00:00:00"):
+                        raise VPError("QOJ returned an invalid account registration start time.")
+                    if is_virtual:
+                        virtual.add(value)
+                    else:
+                        minutes = re.fullmatch(r"(\d+)\s*(?:minutes?|mins?|分钟)?", cells[length_col].get_text(" ", strip=True), re.I)
+                        if not minutes or int(minutes[1]) <= 0:
+                            raise VPError("QOJ's account registration duration could not be parsed.")
+                        records[value] = int(minutes[1]) * 60
+        if not recognized:
+            raise VPError("QOJ's registration table columns could not be identified; no start request was inferred.")
+        starts = virtual if has_virtual_table else records.keys()
+        if not starts:
+            return None
+        latest = max(starts)
+        length = records.get(latest) or duration or self._registry_duration(soup)
+        if not length:
+            raise VPError("QOJ did not provide this virtual participation's duration.")
+        return latest, length
 
-    def start(self, contest: Contest) -> float:
-        soup = self._page()
-        nav = soup.select_one("ul.nav-pills")
-        if not nav or not any(urlsplit(a.get("href", "")).path == f"/user/profile/{self.handle}" for a in nav.select("a")):
-            raise VPError("The QOJ login cookie does not belong to the configured handle.")
-        current = self._registration(duration=contest.rules.duration)
-        if current and time.time() < current[0] + current[1]:
-            self.start_time = current[0]
-            contest.rules.duration = current[1]
-            return self.start_time
-        form = soup.select_one("form#form-regvir")
-        if form is None:
-            if current:
-                self.start_time = current[0]
-                contest.rules.duration = current[1]
-                return self.start_time
-            raise VPError("QOJ did not offer native virtual participation for this account.")
-        payload = form_values(form)
-        payload["submit-regvir"] = "regvir"
-        if not payload.get("_token"):
-            raise VPError("QOJ did not provide a native VP start token.")
-        post_error = None
-        site_message = ""
-        try:
-            response = self.web.post(urljoin(self.url, form.get("action", self.url)), payload)
-            site_message = self._start_message(response)
-        except VPError as exc:
-            # The request may have reached QOJ even if its response was lost.
-            # Verify the registration before reporting failure; never send it again.
-            post_error = exc
-        confirmed = None
+    def _start_receipt(self):
+        key = hashlib.sha256((self.url + "\0" + self.handle).encode()).hexdigest()[:24]
+        return state_directory() / ("qoj-start-" + key + ".json")
+
+    def _accept_start(self, contest: Contest, record: tuple[float, int]) -> float:
+        self.start_time, contest.rules.duration = record
+        self._start_receipt().unlink(missing_ok=True)
+        return self.start_time
+
+    def _confirm_start(self, contest: Contest, pending: dict) -> float:
         registration_error = None
-        for delay in (0, 1, 2):
+        # Only GETs are retried. Allow a short propagation delay after the one
+        # final registration POST, including when its response was lost.
+        for delay in (0, 2, 3, 5, 8, 12):
             if delay:
                 time.sleep(delay)
             try:
-                confirmed = self._registration(duration=contest.rules.duration)
+                record = self._registration(duration=contest.rules.duration)
                 registration_error = None
             except VPError as exc:
                 registration_error = exc
                 continue
-            if confirmed and (not current or confirmed[0] > current[0]):
-                self.start_time = confirmed[0]
-                contest.rules.duration = confirmed[1]
-                return self.start_time
+            if record and (pending["previous_start"] is None or record[0] > pending["previous_start"]):
+                return self._accept_start(contest, record)
+        reason = (f"Registration query failed: {registration_error}" if registration_error else
+                  "No new account registration record was visible after 30 seconds of read-only checks")
+        if pending.get("request_error"):
+            reason = pending["request_error"] + ". " + reason
+        raise VPError(f"QOJ VP start remains unconfirmed. {reason}. "
+                      f"Run vp qoj {self.id} again to check the pending request; no second start POST will be sent. "
+                      f"Pending state: {self._start_receipt()}")
+
+    def _check_start_account(self, soup) -> None:
+        nav = soup.select_one("ul.nav-pills")
+        if not self.handle or not nav or not any(urlsplit(a.get("href", "")).path == f"/user/profile/{self.handle}" for a in nav.select("a")):
+            raise VPError("The QOJ login cookie does not belong to the configured handle.")
+
+    def start(self, contest: Contest) -> float:
+        soup = self._page()
+        self._check_start_account(soup)
+        pending = read_json(self._start_receipt())
+        if pending:
+            # A previous process may have lost its response or exited after
+            # sending the POST. Reconcile with QOJ before considering any form.
+            return self._confirm_start(contest, pending)
+        current = self._registration(duration=contest.rules.duration)
+        if current and time.time() < current[0] + current[1]:
+            return self._accept_start(contest, current)
+        form = soup.select_one("form#form-regvir")
+        if form is None:
+            if current:
+                return self._accept_start(contest, current)
+            raise VPError("QOJ did not offer native virtual participation for this account.")
+        # The dashboard's regvir POST only opens the rules page on current
+        # QOJ. GET that page directly; the sole POST must submit register_vp.
+        form_url = self.url
+        try:
+            response = self.web.get(self.url + "/virtual/register", params={"locale": "en"})
+        except VPError as exc:
+            if str(exc) != f"{urlsplit(self.origin).hostname} returned HTTP 404":
+                raise
+            # Older deployments start directly from the dashboard form.
+        else:
+            form_url = response.url
+            target = urlsplit(form_url)
+            if (target.scheme, target.netloc) != (urlsplit(self.origin).scheme, urlsplit(self.origin).netloc):
+                raise VPError("QOJ returned an unexpected VP registration destination.")
+            soup = BeautifulSoup(response.content, "html.parser")
+            self._check_start_account(soup)
+            if target.path == f"/contest/{self.id}/virtual/register":
+                form = soup.select_one("form#form-register_vp")
+            elif target.path == f"/contest/{self.id}":
+                form = soup.select_one("form#form-regvir")
+            else:
+                form = None
+            if form is None:
+                raise VPError("QOJ did not provide its final native VP registration form; no start POST was sent.")
+        button_name = "submit-register_vp" if form.get("id") == "form-register_vp" else "submit-regvir"
+        button = form.select_one(f'button[type="submit"][name="{button_name}"], input[type="submit"][name="{button_name}"]')
+        if form.get("method", "").lower() != "post" or button is None or button.has_attr("disabled"):
+            raise VPError("QOJ did not provide an enabled native VP registration button.")
+        payload = form_values(form)
+        payload[button["name"]] = button.get("value", "")
+        if not payload.get("_token"):
+            raise VPError("QOJ did not provide a native VP start token.")
+        action = urljoin(form_url, form.get("action") or form_url)
+        target = urlsplit(action)
+        if ((target.scheme, target.netloc) != (urlsplit(self.origin).scheme, urlsplit(self.origin).netloc)
+                or target.path not in (f"/contest/{self.id}", f"/contest/{self.id}/virtual/register")):
+            raise VPError("QOJ returned an unexpected native VP start destination.")
+        pending = {"url": self.url, "handle": self.handle, "previous_start": current[0] if current else None}
+        # Save before sending: a crash or timeout must never permit a second
+        # POST on the next invocation. No token or cookie is persisted here.
+        write_json(self._start_receipt(), pending)
+        try:
+            response = self.web.post(action, payload, referer=form_url)
+        except VPError as exc:
+            pending["request_error"] = str(exc)
+            write_json(self._start_receipt(), pending)
+        else:
+            site_message = self._start_message(response)
             if site_message:
-                break
-        if post_error:
-            raise post_error
-        if site_message:
-            raise VPError(f"QOJ could not start the VP: {site_message}")
-        if registration_error:
-            raise VPError(f"The native VP start could not be verified: {registration_error}. "
-                          f"Run vp qoj {self.id} again to check the existing registration.")
-        if current and confirmed and confirmed[0] <= current[0]:
-            raise VPError("QOJ did not create a new native VP; the old participation is already finished.")
-        raise VPError("QOJ did not confirm a VP start time in the account registration record. "
-                      f"Run vp qoj {self.id} again to check the existing registration.")
+                for secret in (payload["_token"], self.account.get("cookie", "")):
+                    if secret:
+                        site_message = site_message.replace(secret, "[redacted]")
+                # A definite form rejection did not create a participation.
+                self._start_receipt().unlink(missing_ok=True)
+                raise VPError(f"QOJ rejected the VP registration: {site_message}")
+        return self._confirm_start(contest, pending)
 
     @staticmethod
     def _start_message(response) -> str:
@@ -205,19 +285,31 @@ class QOJ:
         content = getattr(response, "content", None)
         if not isinstance(content, (str, bytes)):
             return ""
+        try:
+            data = json.loads(content)
+        except (ValueError, TypeError):
+            data = None
+        if isinstance(data, dict) and (data.get("success") is False or data.get("error") or data.get("errors")):
+            return str(data.get("error") or data.get("errors") or data.get("message") or "Registration rejected")[:500]
         soup = BeautifulSoup(content, "html.parser")
-        errors = soup.select(".alert-danger, .has-error .help-block")
+        for node in soup.select("script, style, .uoj-article"):
+            node.decompose()
+        errors = soup.select(".alert-danger, .has-error .help-block, .uoj-error")
         if errors:
             return " ".join(node.get_text(" ", strip=True) for node in errors)[:500]
+        for node in soup.select("nav, header, footer, form, input, table"):
+            node.decompose()
         title = soup.title.get_text(" ", strip=True) if soup.title else ""
-        if not re.match(r"^(?:Error|Message|Notice|错误|消息|提示)(?:\b|\s|[-:：])", title, re.I):
-            return ""
         main = soup.select_one(".uoj-content, main, #content")
-        if main:
-            for node in main.select("script, style, nav, header, footer, form"):
-                node.decompose()
-            return main.get_text(" ", strip=True)[:500] or title
-        return title[:500]
+        text = (main or soup).get_text(" ", strip=True)
+        if (re.match(r"^(?:Error|错误|出错)(?:\b|\s|[-:：])", title, re.I)
+                or re.search(r"this page has expired|the form is incomplete|invalid csrf token", text, re.I)
+                or re.match(r"^(?:Message|Notice|消息|提示)(?:\b|\s|[-:：])", title, re.I)
+                and re.search(r"denied|not allowed|cannot|failed|expired|拒绝|失败|过期", text, re.I)):
+            return text[:500] or title[:500]
+        # A neutral notice or an ordinary contest page is not evidence of
+        # failure (or success). Only the account's native record confirms time.
+        return ""
 
     def submit_configuration(self, contest: Contest) -> dict:
         ids = [int(x) for x in contest.problems.values()]
