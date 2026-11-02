@@ -136,3 +136,12 @@ class Reference:
     released: bool = False
     message: str = ""
     replay: object | None = None
+    qoj_snapshot: bool = False
+
+    @property
+    def rank_available(self) -> bool:
+        # A QOJ snapshot can support a labelled comparison, but must never
+        # satisfy the strict original-data completion or replay flags.
+        official = [row for row in self.rows if row.eligible]
+        return self.complete or (self.qoj_snapshot and bool(official) and all(
+            row.results_complete and not any(c.pending for c in row.cells.values()) for row in official))

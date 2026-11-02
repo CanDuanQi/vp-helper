@@ -343,11 +343,15 @@ def monitor(path: Path) -> None:
                 all_final = all(s.verdict not in ("PENDING", "UNAVAILABLE") for s in submissions.values() if 0 <= s.time < contest.rules.duration)
                 finalized = (elapsed >= contest.rules.duration and not frozen and current_reference.complete
                              and api.submissions_complete and have_polled and all_final)
-                rank = "?" if frozen else str(rank_of(private, current_reference.rows)) if current_reference.complete and private.results_complete else "—"
-                shown_rank = rank_label(private, current_reference.rows) if current_reference.complete and private.results_complete and not frozen else rank
+                rank = "?" if frozen else str(rank_of(private, current_reference.rows)) if current_reference.rank_available and private.results_complete else "—"
+                shown_rank = rank_label(private, current_reference.rows) if current_reference.rank_available and private.results_complete and not frozen else rank
                 prize = (prize_of(private, current_reference.rows, contest.medals) if finalized
                          else "Unknown" if not current_reference.complete else "")
                 stats = statistics(current_reference.rows + [public], list(contest.problems)) if current_reference.statistics_complete and public.results_complete else None
+                if current_reference.qoj_snapshot and current_reference.rank_available and not frozen:
+                    # Snapshot statistics describe QOJ's non-VP teams only;
+                    # the current VP's own results remain in the personal row.
+                    stats = statistics(current_reference.rows, list(contest.problems))
                 shown_message = submission_error or reference_error or current_reference.message
                 if finalized and current_reference.replay is not None and not submission_error and not reference_error:
                     shown_message = "Finished"
@@ -362,6 +366,8 @@ def monitor(path: Path) -> None:
                 if now >= next_render:
                     dashboard = display(contest, elapsed, private, shown_rank, prize, stats, records, shown_message)
                     dashboard.revealed = revealed_problems(contest, elapsed, current_reference)
+                    if current_reference.qoj_snapshot:
+                        dashboard.reference = current_reference
                     view.update(dashboard)
                     next_render = now + 0.25
                 if fresh_submissions:

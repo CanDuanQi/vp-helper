@@ -5,7 +5,7 @@
  '''
  Requirements for contest.json
  
-@@ -12,10 +13,30 @@
+@@ -12,19 +13,59 @@
  '''
  
  import sys
@@ -37,8 +37,10 @@
 +from vp_helper.browser_login import refresh_submission_login
  
  LANG_MAPPING = {
-     '.cpp': 'C++20',
-@@ -23,8 +44,28 @@
+-    '.cpp': 'C++20',
+-    '.cc': 'C++20',
++    '.cpp': 'C++23',
++    '.cc': 'C++23',
      '.py': 'PyPy3',
  }
  

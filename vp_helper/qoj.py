@@ -17,6 +17,7 @@ from .models import Cell, Contest, Reference, Rules, Submission, TeamScore, VPEr
 from .originals import OriginalReplay, cache_archive_submissions, classify, eligibility_lookup, identity, load_archive_submissions, load_metadata, lookup_team
 from .parsing import ccpc_reveal_count, directory_name, js_value, medals_from_html, seconds, timestamp
 from .scoring import verdict
+from .qoj_snapshot import reference_from_html as qoj_snapshot
 from .storage import read_json, state_directory, write_json
 
 
@@ -39,6 +40,7 @@ class QOJ:
         self._replay_error = ""
         self._next_replay_attempt = 0.0
         self._public_web = None
+        self._using_qoj_snapshot = False
 
     def _page(self, suffix: str = "", **params) -> BeautifulSoup:
         return self.web.soup(self.url + suffix, params={"locale": "en", **params})
@@ -509,7 +511,14 @@ class QOJ:
         return Reference(rows, complete=True, statistics_complete=True, released=released)
 
     def reference(self, contest: Contest, elapsed: float) -> Reference:
-        soup = self._page("/standings", show_unofficial="true")
+        try:
+            soup = self._page("/standings", show_unofficial="true")
+        except VPError as exc:
+            if self._using_qoj_snapshot:
+                # A failed refresh must not leave an old QOJ-only comparison
+                # looking current while the personal score keeps changing.
+                return Reference(message="QOJ reference unavailable: " + str(exc))
+            raise
         html = str(soup)
         released = False
         if elapsed >= contest.rules.duration:
@@ -542,9 +551,25 @@ class QOJ:
                         and js_value(html, "my_name", "") == self.handle and no_hidden)
         # Keep the public archive connection across metadata and event downloads.
         # This session carries none of the judge account's cookies.
-        with requests.Session() as public_web:
-            return self._original_reference(html, contest, elapsed, released, public_web,
-                                            fetch_final=elapsed < contest.rules.duration)
+        try:
+            with requests.Session() as public_web:
+                original = self._original_reference(html, contest, elapsed, released, public_web,
+                                                    fetch_final=elapsed < contest.rules.duration)
+        except (VPError, requests.RequestException) as exc:
+            original = Reference(message=str(exc), released=released)
+        if original.complete or original.replay is not None:
+            self._using_qoj_snapshot = False
+            return original
+        # Reuse the account's current QOJ view. It can be VP-time truncated;
+        # never pass it off as a complete original scoreboard or event replay.
+        snapshot = qoj_snapshot(html, contest, released=released)
+        self._using_qoj_snapshot = snapshot.qoj_snapshot
+        if snapshot.qoj_snapshot:
+            if original.message:
+                snapshot.message += " · Original data: " + original.message
+            return snapshot
+        original.message = " · ".join(filter(None, (original.message, snapshot.message)))
+        return original
 
     @staticmethod
     def external_reference_from_html(html: str, contest: Contest) -> Reference:

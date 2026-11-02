@@ -8,7 +8,8 @@ from rich.console import Console, Group
 from rich.table import Table
 from rich.text import Text
 
-from .models import Contest, TeamScore
+from .models import Contest, Reference, TeamScore
+from .scoring import rank_label
 
 
 PRACTICE_WRONG = "#d75f00"
@@ -32,6 +33,7 @@ class Dashboard:
     submissions: list[dict]
     message: str = ""
     revealed: frozenset[str] | None = None
+    reference: Reference | None = None
 
     def fixed(self, width: int):
         # Equal side columns keep the contest title at the screen's center.
@@ -49,9 +51,10 @@ class Dashboard:
         table = Table(box=SCORE_BOX, padding=(0, 1), style="default",
                       header_style="bold black on #eeeeee", border_style="#bbbbbb",
                       show_edge=False, expand=True)
-        for label in ("rank", "team", "solved", "penalty", *self.contest.problems):
+        rank_title = "QOJ 参考排名" if self.reference is not None else "rank"
+        for label in (rank_title, "team", "solved", "penalty", *self.contest.problems):
             table.add_column(label, justify="left" if label == "team" else "center",
-                             no_wrap=label == "rank", min_width=12 if label == "rank" else None)
+                             no_wrap=label == rank_title, min_width=12 if label == rank_title else None)
         cells = []
         for label in self.contest.problems:
             c = self.me.cells[label]
@@ -74,7 +77,7 @@ class Dashboard:
                       *cells, end_section=True)
         if not self.contest.rules.problem_reveal_count:
             for key in ("submitted", "attempted", "accepted"):
-                table.add_row("", key, "", "", *(str(self.stats[key][p]) if self.stats else "—"
+                table.add_row("", ("QOJ " if self.reference is not None else "") + key, "", "", *(str(self.stats[key][p]) if self.stats else "—"
                                                  for p in self.contest.problems))
         labels = self._record_table()
         labels.add_row("problem", "submission", "time", "result", style="bold black on #eeeeee")
@@ -82,7 +85,9 @@ class Dashboard:
             return Group(heading, Text(" "), table, self.public_statistics(), Text(" "), labels)
         return Group(heading, Text(" "), table, Text(" "), labels)
 
-    def public_statistics(self):
+    def public_columns(self):
+        if not self.contest.rules.problem_reveal_count:
+            return list(self.contest.problems)
         visible = self.revealed or frozenset()
         freeze = self.contest.rules.freeze_at
         if self.elapsed >= self.contest.rules.duration or freeze is not None and self.elapsed >= freeze:
@@ -90,7 +95,12 @@ class Dashboard:
         ordered = [p for p in self.contest.problems if p in visible]
         # Unknown columns are grouped, not left at A..M positions. Their values
         # are also hidden so the column order cannot expose the problem mapping.
-        columns = ordered + [None] * (len(self.contest.problems) - len(ordered))
+        return ordered + [None] * (len(self.contest.problems) - len(ordered))
+
+    def public_statistics(self):
+        columns = self.public_columns()
+        ordered = [p for p in columns if p is not None]
+        freeze = self.contest.rules.freeze_at
         table = Table(box=None, expand=True, padding=(0, 1), style="default", header_style="bold")
         table.add_column("public", justify="left")
         for problem in columns:
@@ -126,7 +136,30 @@ class Dashboard:
                                 Text(clock(item["time"])), Text("RESULT UNAVAILABLE" if v == "UNAVAILABLE" else v, style=color))
         if not self.submissions:
             results.add_row(Text("No submissions yet", style="#555555"))
+        if self.reference is not None:
+            return Group(results, Text(" "), self.reference_standings())
         return results
+
+    def reference_standings(self):
+        reference = self.reference
+        table = Table(box=box.SIMPLE, expand=True, title="QOJ 参考榜单 · 当前可见快照，非原赛回放",
+                      caption="排除 VP；* 不计排名和统计。备用成绩在封榜期间隐藏，题号遵循原有揭示规则。")
+        columns = self.public_columns()
+        for label in ("rank", "team", "solved", "penalty", *[p or "?" for p in columns]):
+            table.add_column(label, justify="left" if label == "team" else "center")
+        frozen = self.contest.rules.frozen(self.elapsed, reference.released)
+        for row in sorted(reference.rows, key=lambda row: row.sort_key):
+            rank = ("*" if not row.eligible else "?" if frozen else
+                    rank_label(row, reference.rows) if reference.rank_available else "—")
+            cells = []
+            for label in columns:
+                cell = row.cells[label] if label is not None else None
+                cells.append("?" if frozen or cell is None else f"?{cell.pending}" if cell.pending else
+                             ("+" + (str(cell.tries - 1) if cell.tries > 1 else "") + f"\n{cell.solve_time}")
+                             if cell.solved else f"-{cell.tries}" if cell.tries else "—")
+            table.add_row(rank, Text(row.name), "—" if frozen else str(row.solved),
+                          "—" if frozen else str(row.penalty), *cells)
+        return table
 
     def __rich_console__(self, console, options):
         yield Group(self.fixed(options.max_width), self.records(), Text(self.message, style="#555555"))
@@ -287,12 +320,13 @@ class TerminalDashboard:
         for row, segments in enumerate(records[self.offset:self.offset + self.page_size], start=len(fixed)):
             if row < height - 2:
                 self._draw(row, segments, content_width, left)
-        last = min(self.offset + self.page_size, len(dashboard.submissions))
-        first = self.offset + 1 if dashboard.submissions else 0
+        count = len(records) if dashboard.reference is not None else len(dashboard.submissions)
+        last = min(self.offset + self.page_size, count)
+        first = self.offset + 1 if count else 0
         footer = Table.grid(expand=True, padding=(0, 1))
         footer.add_column(ratio=1, no_wrap=True, overflow="ellipsis")
         footer.add_column(justify="right", no_wrap=True)
-        footer.add_row(Text(dashboard.message, style="#666666"), Text(f"{first}–{last} / {len(dashboard.submissions)}", style="#666666"))
+        footer.add_row(Text(dashboard.message, style="#666666"), Text(f"{first}–{last} / {count}" + (" lines" if dashboard.reference is not None else ""), style="#666666"))
         self._draw(height - 2, self._lines(footer, content_width)[0], content_width, left)
         keys = Text("↑/↓ scroll · PgUp/PgDn · Home/End", style="#999999", no_wrap=True, overflow="ellipsis")
         self._draw(height - 1, self._lines(keys, content_width)[0], content_width, left)

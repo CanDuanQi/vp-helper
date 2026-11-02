@@ -39,8 +39,8 @@ from vp_helper.submit_context import submission_configuration
 from vp_helper.browser_login import refresh_submission_login
 
 LANG_MAPPING = {
-    '.cpp': 'C++20',
-    '.cc': 'C++20',
+    '.cpp': 'C++23',
+    '.cc': 'C++23',
     '.py': 'PyPy3',
 }
 
