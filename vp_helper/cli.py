@@ -17,6 +17,7 @@ from rich.console import Console
 from rich.table import Table
 from rich import box
 
+from . import __version__
 from .models import Contest, Reference, Submission, VPError
 from .browser_login import browser_fields, refresh_browser_account
 from .history_lines import enrich_history
@@ -121,7 +122,7 @@ def configure_submit(api, contest: Contest, directory: Path) -> None:
         else:
             raise VPError("The Gym submit script's configuration format must be connected before a native VP is started.")
     if bundled:
-        tool = Path("/opt/vp-helper/current/third_party") / ("qoj" if contest.platform == "qoj" else "cf_submit") / "submit"
+        tool = Path(sys.prefix).parent / "third_party" / ("qoj" if contest.platform == "qoj" else "cf_submit") / "submit"
         if not tool.is_file() or not os.access(tool, os.X_OK):
             raise VPError(f"The bundled {contest.platform} submit script is missing; reinstall vp.")
         temporary = selected.with_name("submit.new")
@@ -344,7 +345,8 @@ def monitor(path: Path) -> None:
                              and api.submissions_complete and have_polled and all_final)
                 rank = "?" if frozen else str(rank_of(private, current_reference.rows)) if current_reference.complete and private.results_complete else "—"
                 shown_rank = rank_label(private, current_reference.rows) if current_reference.complete and private.results_complete and not frozen else rank
-                prize = prize_of(private, current_reference.rows, contest.medals) if finalized else ""
+                prize = (prize_of(private, current_reference.rows, contest.medals) if finalized
+                         else "Unknown" if not current_reference.complete else "")
                 stats = statistics(current_reference.rows + [public], list(contest.problems)) if current_reference.statistics_complete and public.results_complete else None
                 shown_message = submission_error or reference_error or current_reference.message
                 if finalized and current_reference.replay is not None and not submission_error and not reference_error:
@@ -383,7 +385,9 @@ def monitor(path: Path) -> None:
 def main() -> None:
     args = sys.argv[1:]
     try:
-        if args == ["history"]:
+        if args == ["--version"]:
+            console.print("VP Helper " + __version__, markup=False)
+        elif args == ["history"]:
             history()
         elif len(args) == 2 and args[0] == "_monitor":
             monitor(Path(args[1]))
@@ -392,7 +396,7 @@ def main() -> None:
         elif len(args) == 1 and args[0] not in ("-h", "--help"):
             start(args[0])
         elif args in ([], ["-h"], ["--help"]):
-            console.print("Usage: vp cf ID\n       vp qoj ID\n       vp gym ID\n       vp CONTEST_URL\n       vp history", markup=False)
+            console.print("Usage: vp cf ID\n       vp qoj ID\n       vp gym ID\n       vp CONTEST_URL\n       vp history\n       vp --version", markup=False)
         else:
             raise VPError("Usage: vp cf ID, vp qoj ID, vp gym ID or vp history")
     except (VPError, OSError, subprocess.CalledProcessError) as exc:

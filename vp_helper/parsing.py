@@ -69,7 +69,7 @@ def js_value(html: str, key: str, default=None):
         return default
 
 
-def directory_name(titles: list[str]) -> str:
+def directory_name(titles: list[str], *, fallback: str | None = None) -> str:
     for title in titles:
         # Recent CCPC titles pair a Chinese name with a complete English name.
         english = [part for part in re.findall(r"[（(]([^（）()]+)[）)]", title)
@@ -91,6 +91,14 @@ def directory_name(titles: list[str]) -> str:
         site = " ".join(site.split()).strip(" .")
         if site:
             return f"{year[1]} {series[1].upper()} {site} {kind}"
+    if fallback is not None:
+        # Callers must verify ICPC scoring first. The platform and ID prevent
+        # unrelated contests with the same title from sharing submission files.
+        title = next((title for title in titles if title.strip()), "")
+        title = re.sub(r'[<>:"/\\|?*\x00-\x1f\x7f]', " ", title)
+        title = " ".join(title.split()).strip(" .")
+        title = title.encode("utf8")[:180].decode("utf8", errors="ignore").rstrip(" .")
+        return fallback + (" " + title if title else "")
     raise VPError("The platform does not identify an ICPC/CCPC year, site and Reg/Inv/Pro contest name.")
 
 

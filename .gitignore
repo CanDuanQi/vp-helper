@@ -1,8 +1,8 @@
 # Development and test artifacts
-tests/
 test/
 fixtures/
 test_*.py
+!tests/test_*.py
 *_test.py
 __pycache__/
 *.py[cod]

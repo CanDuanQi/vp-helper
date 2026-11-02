@@ -78,7 +78,7 @@ class Gym:
         soup = self.web.soup(self.url, params={"locale": "en"})
         dashboard_html = str(soup)
         names = [raw["name"]] + [h.get_text(" ", strip=True) for h in soup.select("h1,h2")]
-        name = directory_name(names)
+        name = directory_name(names, fallback=f"{self.platform.upper()} {self.id}")
         pdfs = {}
         for a in soup.select("a[href]"):
             label = a.get_text(" ", strip=True)

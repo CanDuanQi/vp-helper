@@ -63,7 +63,7 @@ def firefox_profiles(account: dict, *, diagnostics: list[str] | None = None) -> 
         xdg = home / ".config"
     snap = home / "snap/firefox"
     flatpak = home / ".var/app/org.mozilla.firefox"
-    bases = (home / ".mozilla/firefox", xdg / "mozilla/firefox",
+    bases = (home / ".mozilla/firefox", home / ".mozilla/firefox-esr", xdg / "mozilla/firefox",
              snap / "common/.mozilla/firefox", snap / "common/.config/mozilla/firefox",
              snap / "current/.mozilla/firefox", snap / "current/.config/mozilla/firefox",
              flatpak / ".mozilla/firefox", flatpak / "config/mozilla/firefox")

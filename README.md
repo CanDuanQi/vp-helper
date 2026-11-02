@@ -2,14 +2,34 @@
 
 Ubuntu 上的 XCPC 虚拟参赛终端助手，支持 QOJ、Codeforces ICPC 比赛和 Codeforces Gym。上方显示成绩与完整提交记录，下方保留比赛目录中的普通 shell。
 
-当前版本：0.1.16。
+当前版本：0.1.16+cdq.1（CanDuanQi 修改版，基于上游 0.1.16）。
+
+## 本 Fork 的修改
+
+原作者与来源：[thedyingkai/vp-helper](https://github.com/thedyingkai/vp-helper)。保留其提交历史、作者信息和 `third_party/` 内的组件来源、兼容补丁与许可证。
+
+- QOJ、Codeforces 和 Gym 以平台确认的 **ICPC 计分规则**为准，不再要求标题带有年份、赛站和 Reg/Inv/Pro。CF / IOI 计分仍会拒绝；平台原生 VP、赛长和可下载的 PDF 题面要求沿用原逻辑。
+- 正式 ICPC / CCPC 标准赛事仍采用原目录名称和原赛校验、回放、实时排名、奖项、封榜及题号揭示机制。
+- 非标准赛事目录采用“平台 ID 标题”，例如 `QOJ 2565 比赛标题`，清理路径分隔符等特殊字符并限制长度；不同 ID 不会因同名比赛而共用提交配置。题面下载、`contest.json`、个人 ICPC 成绩、提交记录及补题标记沿用原有流程。
+- 没有可靠原赛数据时，排名与原赛统计显示 `—`，奖项显示 `Unknown`，并保留缺失原因。不会根据标题编造原赛年份、资格、奖牌名额或原赛提交记录。个人成绩及提交记录仍更新。
+- Firefox 自动配置识别新增 `~/.mozilla/firefox-esr/`，兼容 `profiles.ini` 的相对和绝对路径、默认配置及 sudo 原用户识别。
+- 增加 `vp --version` 和无需 sudo 的用户目录安装，方便确认正在使用本 Fork。
+
+使用方式不变，例如下列命令会在你主动执行时启动或恢复原站 VP（测试不会执行这些命令）：
+
+```bash
+vp qoj 2565
+vp qoj 4616
+```
+
+比赛仍须在平台上提供 ICPC 赛制、赛长、题面和原生 VP；放宽名称不会绕过平台的登录或参赛条件。
 
 ## 安装
 
 支持 Ubuntu 22.04 / 24.04，随仓库提供 Linux x86_64 的独立 Python 3.12 运行时与依赖 wheels。安装器使用隔离环境，保留系统 Python。
 
 ```bash
-git clone https://github.com/thedyingkai/vp-helper.git
+git clone https://github.com/CanDuanQi/vp-helper.git
 cd vp-helper
 bash install.sh
 ```
@@ -24,6 +44,29 @@ bash install.sh
 ```
 
 使用 ZIP 安装时，重新下载并解压最新版，在新目录内运行 `bash install.sh`。全局 `vp` 使用 `/opt/vp-helper/current` 中的安装副本，只更新源码目录不会更新已安装的命令。
+
+### 用户目录安装（不需要 sudo）
+
+本机已有 Python 3.12+（含 venv/ensurepip）和 tmux 时，可使用仓库内 wheels 离线安装：
+
+```bash
+bash install-user.sh
+hash -r
+command -v vp
+vp --version
+```
+
+安装目录为 `${XDG_DATA_HOME:-~/.local/share}/vp-helper/`，入口为 `~/.local/bin/vp` 和 `~/.local/bin/submit`。请让 `~/.local/bin` 位于 PATH 最前；它们将优先于全局同名命令。已有全局 `/usr/local/bin/vp` 和 DOMjudge 等其他 `submit` 程序保留，可通过其绝对路径使用。若用户入口已有其他文件或非本安装器管理的链接，安装器会退出而不覆盖。已有账号、比赛、历史文件保留，原有 `submit_script` 显式配置也继续生效。
+
+各次安装保留独立 release，只有依赖安装和检查成功后才切换 `current`。提交器使用当前 VP 的安装环境，支持用户目录和系统目录两种安装。更新代码后重新执行同一个安装器；旧的 `/opt` 版本不会因用户安装被修改。
+
+确认安装路径及版本：
+
+```bash
+type -a vp submit
+readlink -f "$(command -v vp)"
+vp --version  # VP Helper 0.1.16+cdq.1
+```
 
 ## 使用
 
@@ -47,7 +90,7 @@ vp history
 
 先在 Ubuntu 的 Firefox 登录 QOJ 或 Codeforces，再运行比赛命令。`vp` 和内置 `submit` 自动读取 Firefox 的登录状态，并通过网站导航中的登录用户核对账号；未填写 handle 时也可以从已验证的浏览器登录自动取得。Codeforces / Gym 的 API key 与 API secret 仍在首次使用时配置。配置保存在 `~/.config/vp/config.json`，权限为 600；也可以参考 `config.example.json` 填写。`cf` 与 `gym` 默认共用 Codeforces 配置。
 
-自动读取支持 Firefox 的旧目录 `~/.mozilla/firefox`、XDG 目录（默认 `~/.config/mozilla/firefox`，也支持自定义 `XDG_CONFIG_HOME`）、Ubuntu Snap 和 Flatpak 目录，读取该网站的持久 Cookie 和最新会话恢复记录；其他网站及容器、隐私会话不参与导入。程序只读取浏览器文件。验证通过后将登录数据保存到本地配置，账号不匹配或网络验证失败时保留原配置。GET 遇到登录过期会重新读取并验证一次；启动 VP 和提交代码的 POST 不自动重发。Firefox 尚未保存新会话时稍候再运行命令，或登录时勾选“记住我”。
+自动读取支持 Firefox 的旧目录 `~/.mozilla/firefox`、ESR 目录 `~/.mozilla/firefox-esr/`、XDG 目录（默认 `~/.config/mozilla/firefox`，也支持自定义 `XDG_CONFIG_HOME`）、Ubuntu Snap 和 Flatpak 目录，读取该网站的持久 Cookie 和最新会话恢复记录；其他网站及容器、隐私会话不参与导入。程序只读取浏览器文件。验证通过后将登录数据保存到本地配置，账号不匹配或网络验证失败时保留原配置。GET 遇到登录过期会重新读取并验证一次；启动 VP 和提交代码的 POST 不自动重发。Firefox 尚未保存新会话时稍候再运行命令，或登录时勾选“记住我”。
 
 登录过期时，在 Firefox 重新登录同一个账号，再运行原命令即可，无需复制 Cookie。多 Firefox 配置可在对应平台账号中指定 `firefox_profile` 为该 profile 的完整路径；sudo 启动时默认使用原普通用户的 Firefox。root 与普通用户的应用配置仍分别保存，root 使用 `/root/.config/vp/config.json`，普通用户使用自己的 `~/.config/vp/config.json`。
 
@@ -107,4 +150,37 @@ SRK Collection 的档案按其 AGPL-3.0 许可证提供，来源和许可证保�
 
 提交器来自 [hikariyo 的 QOJ submit.py](https://gist.github.com/hikariyo/b3cec2e736d87be57d1e4faafb04f908) 与 [ehnryx/cf_submit](https://github.com/ehnryx/cf_submit)，固定版本、兼容补丁与现有许可证保存在 `third_party/`。Python 运行时的来源与校验值见 `runtimes/manifest.json`。
 
-本仓库仅包含运行程序、安装依赖和使用文档；比赛数据、测试代码、测试样例、账号配置及个人比赛文件不纳入仓库。
+本仓库包含运行程序、安装依赖、使用文档与离线回归测试；比赛数据、账号配置及个人比赛文件不纳入仓库。测试仅使用内存中生成的虚构页面和临时文件，不读取真实 Firefox Cookie，不启动真实比赛 VP，不提交代码；网络和原生 VP 启动被 mock 禁止。
+
+## 开发与测试
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install --no-index --find-links wheels -e .
+.venv/bin/python -m unittest discover -s tests -v
+bash -n install-user.sh install.sh
+git diff --check
+```
+
+测试覆盖标准 Reg/Inv/Pro 命名、非标准名称和安全目录、QOJ / CF / Gym 的 ICPC 检查与准备流程、题面下载和提交映射、个人成绩和补题记录、原赛缺失时的未知状态、已验证原赛回放和奖项、封榜、题号揭示、Firefox ESR 与原有配置目录。题面下载和提交配置使用临时目录及模拟响应；真实平台登录、开赛、上传代码和判题结果仍需用户自行验证。
+
+## 同步原作者更新
+
+本 Fork 的 `origin` 应指向 `CanDuanQi/vp-helper`，`upstream` 仅用于读取原仓库。首次设置：
+
+```bash
+git remote add upstream https://github.com/thedyingkai/vp-helper.git
+git remote set-url --push upstream DISABLED
+```
+
+同步前确认 `git status` 干净，在保存本修改的分支上合并、解决可能的冲突并测试，然后仅推送自己的 Fork：
+
+```bash
+git fetch upstream
+git merge upstream/main
+.venv/bin/python -m unittest discover -s tests -v
+git push origin HEAD
+bash install-user.sh  # 使用系统安装的用户改用 bash install.sh，执行前确认 sudo 操作
+```
+
+不要用 `reset --hard upstream/main` 丢弃本 Fork 的修改，也不要向 upstream 推送或发起 PR。

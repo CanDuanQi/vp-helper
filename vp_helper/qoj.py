@@ -44,7 +44,10 @@ class QOJ:
         soup = self._page()
         titles = [h.get_text(" ", strip=True) for h in soup.select("h1")]
         titles.extend(a.get_text(" ", strip=True) for a in soup.select('a[href*="?v="]'))
-        name = directory_name(titles)
+        text = soup.get_text(" ", strip=True)
+        if "Ruleset: ICPC" not in text:
+            raise VPError("This QOJ contest does not use ICPC scoring.")
+        name = directory_name(titles, fallback=f"QOJ {self.id}")
         problem_map = {}
         for row in soup.select("tr"):
             a = row.select_one(f'a[href*="/contest/{self.id}/problem/"]')
@@ -55,9 +58,6 @@ class QOJ:
                     problem_map[label] = urlsplit(a["href"]).path.rsplit("/", 1)[-1]
         if not problem_map:
             raise VPError("QOJ did not return the contest problem list.")
-        text = soup.get_text(" ", strip=True)
-        if "Ruleset: ICPC" not in text:
-            raise VPError("This QOJ contest does not use ICPC scoring.")
         freeze = re.search(r"Scoreboard will be frozen after\s*(\d+:\d{2}:\d{2})", text)
         penalty = re.search(r"Penalty:\s*(\d+)\s*minute", text)
         # Registrants can choose a shorter rated-VP window. It is not the
