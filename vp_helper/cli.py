@@ -22,6 +22,7 @@ from .models import Contest, Reference, Submission, VPError
 from .browser_login import browser_fields, refresh_browser_account
 from .history_lines import enrich_history
 from .parsing import contest_url, contest_id_url
+from .qoj_snapshot import public_statistics as qoj_public_statistics
 from .receipts import ReceiptReader
 from .scoring import medal_lines, rank_of, rank_label, prize_of, recent_submissions, revealed_problems, score_submissions, statistics, submission_history
 from .storage import config_directory, desktop, file_lock, read_history, read_json, state_directory, update_history, write_json
@@ -343,15 +344,17 @@ def monitor(path: Path) -> None:
                 all_final = all(s.verdict not in ("PENDING", "UNAVAILABLE") for s in submissions.values() if 0 <= s.time < contest.rules.duration)
                 finalized = (elapsed >= contest.rules.duration and not frozen and current_reference.complete
                              and api.submissions_complete and have_polled and all_final)
-                rank = "?" if frozen else str(rank_of(private, current_reference.rows)) if current_reference.rank_available and private.results_complete else "—"
-                shown_rank = rank_label(private, current_reference.rows) if current_reference.rank_available and private.results_complete and not frozen else rank
+                rank_score = public if current_reference.qoj_snapshot else private
+                rank_frozen = frozen and not current_reference.qoj_snapshot
+                rank = "?" if rank_frozen else str(rank_of(rank_score, current_reference.rows)) if current_reference.rank_available and rank_score.results_complete else "—"
+                shown_rank = rank_label(rank_score, current_reference.rows) if current_reference.rank_available and rank_score.results_complete and not rank_frozen else rank
                 prize = (prize_of(private, current_reference.rows, contest.medals) if finalized
                          else "Unknown" if not current_reference.complete else "")
                 stats = statistics(current_reference.rows + [public], list(contest.problems)) if current_reference.statistics_complete and public.results_complete else None
-                if current_reference.qoj_snapshot and current_reference.rank_available and not frozen:
+                if current_reference.qoj_snapshot:
                     # Snapshot statistics describe QOJ's non-VP teams only;
                     # the current VP's own results remain in the personal row.
-                    stats = statistics(current_reference.rows, list(contest.problems))
+                    stats = qoj_public_statistics(current_reference, list(contest.problems))
                 shown_message = submission_error or reference_error or current_reference.message
                 if finalized and current_reference.replay is not None and not submission_error and not reference_error:
                     shown_message = "Finished"

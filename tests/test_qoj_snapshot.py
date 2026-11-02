@@ -84,11 +84,11 @@ class SnapshotTests(OfflineTest):
         self.assertEqual(stats["submitted"], {"A": 2, "B": 3})
         self.assertEqual(stats["attempted"], {"A": 1, "B": 1})
 
-    def test_hidden_results_do_not_enable_comparison(self):
+    def test_hidden_results_preserve_public_comparison(self):
         rows = [[0, 0, ["team", 1500, 3, "Team"]]]
         ref = reference_from_html(board(rows, {"team": [cell(solved=False, hidden=1)]}), contest())
         self.assertTrue(ref.qoj_snapshot)
-        self.assertFalse(ref.rank_available)
+        self.assertTrue(ref.rank_available)
         self.assertEqual(ref.rows[0].cells["A"].pending, 1)
 
     def test_bad_labels_partial_rules_and_unknown_versions_are_unavailable(self):
@@ -204,7 +204,7 @@ class DashboardTests(OfflineTest):
         self.assertNotIn("Other VP", text)
         self.assertIn("Unknown", text)
 
-    def test_frozen_and_unrevealed_reference_does_not_leak_labels_or_ranks(self):
+    def test_frozen_reference_preserves_public_scores_and_reveal_rules(self):
         c = contest("2026 CCPC Example Reg")
         c.rules = Rules(18000, freeze_at=14400, problem_reveal_count=50)
         ref = reference_from_html(board(), c)
@@ -215,12 +215,12 @@ class DashboardTests(OfflineTest):
         dashboard.elapsed = 14400
         self.assertEqual(dashboard.public_columns(), ["A", "B"])
         ranks = list(dashboard.reference_standings().columns[0]._cells)
-        self.assertEqual(ranks.count("?"), 2)
+        self.assertEqual(sorted(r for r in ranks if r != "*"), ["1", "2"])
         self.assertEqual(ranks.count("*"), 2)
         frozen = dashboard.reference_standings()
-        self.assertEqual(set(frozen.columns[2]._cells), {"—"})
-        self.assertEqual(set(frozen.columns[3]._cells), {"—"})
-        self.assertEqual(set(frozen.columns[4]._cells), {"?"})
+        self.assertEqual(set(frozen.columns[2]._cells), {"1"})
+        self.assertEqual(set(frozen.columns[3]._cells), {"0", "1", "2"})
+        self.assertTrue(all(value.startswith("+") for value in frozen.columns[4]._cells))
         ref.released = True
         self.assertEqual(set(dashboard.reference_standings().columns[2]._cells), {"1"})
 

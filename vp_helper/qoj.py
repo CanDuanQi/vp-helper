@@ -562,7 +562,7 @@ class QOJ:
             return original
         # Reuse the account's current QOJ view. It can be VP-time truncated;
         # never pass it off as a complete original scoreboard or event replay.
-        snapshot = qoj_snapshot(html, contest, released=released)
+        snapshot = qoj_snapshot(html, contest, released=released, elapsed=elapsed)
         self._using_qoj_snapshot = snapshot.qoj_snapshot
         if snapshot.qoj_snapshot:
             if original.message:

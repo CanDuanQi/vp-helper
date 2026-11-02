@@ -35,6 +35,10 @@ class Dashboard:
     revealed: frozenset[str] | None = None
     reference: Reference | None = None
 
+    def statistic(self, key, problem):
+        value = self.stats[key][problem] if self.stats is not None else None
+        return str(value) if value is not None else "—"
+
     def fixed(self, width: int):
         # Equal side columns keep the contest title at the screen's center.
         sides = min(30, max(19, (width - 8) // 3))
@@ -52,6 +56,8 @@ class Dashboard:
                       header_style="bold black on #eeeeee", border_style="#bbbbbb",
                       show_edge=False, expand=True)
         rank_title = "QOJ 参考排名" if self.reference is not None else "rank"
+        if self.reference is not None and self.contest.rules.frozen(self.elapsed, self.reference.released):
+            rank_title = "QOJ 公开参考排名"
         for label in (rank_title, "team", "solved", "penalty", *self.contest.problems):
             table.add_column(label, justify="left" if label == "team" else "center",
                              no_wrap=label == rank_title, min_width=12 if label == rank_title else None)
@@ -77,8 +83,8 @@ class Dashboard:
                       *cells, end_section=True)
         if not self.contest.rules.problem_reveal_count:
             for key in ("submitted", "attempted", "accepted"):
-                table.add_row("", ("QOJ " if self.reference is not None else "") + key, "", "", *(str(self.stats[key][p]) if self.stats else "—"
-                                                 for p in self.contest.problems))
+                table.add_row("", ("QOJ " if self.reference is not None else "") + key, "", "",
+                              *(self.statistic(key, p) for p in self.contest.problems))
         labels = self._record_table()
         labels.add_row("problem", "submission", "time", "result", style="bold black on #eeeeee")
         if self.contest.rules.problem_reveal_count:
@@ -106,7 +112,7 @@ class Dashboard:
         for problem in columns:
             table.add_column(problem or "?", justify="center")
         for key in ("submitted", "attempted", "accepted"):
-            table.add_row(key, *("?" if p is None else str(self.stats[key][p]) if self.stats else "—" for p in columns))
+            table.add_row(key, *("?" if p is None else self.statistic(key, p) for p in columns))
         caption = f"CCPC · revealed {len(ordered)}/{len(self.contest.problems)} · {self.contest.rules.problem_reveal_count} teams incl. starred"
         if freeze is not None:
             caption += " · all labels at " + clock(freeze)
@@ -143,22 +149,21 @@ class Dashboard:
     def reference_standings(self):
         reference = self.reference
         table = Table(box=box.SIMPLE, expand=True, title="QOJ 参考榜单 · 当前可见快照，非原赛回放",
-                      caption="排除 VP；* 不计排名和统计。备用成绩在封榜期间隐藏，题号遵循原有揭示规则。")
+                      caption="排除 VP；* 不计排名和统计。?N 为原站公开次数，不计 AC；提交/尝试统计含 ?。封榜时本人名次按公开成绩计算。")
         columns = self.public_columns()
         for label in ("rank", "team", "solved", "penalty", *[p or "?" for p in columns]):
             table.add_column(label, justify="left" if label == "team" else "center")
-        frozen = self.contest.rules.frozen(self.elapsed, reference.released)
         for row in sorted(reference.rows, key=lambda row: row.sort_key):
-            rank = ("*" if not row.eligible else "?" if frozen else
+            rank = ("*" if not row.eligible else
                     rank_label(row, reference.rows) if reference.rank_available else "—")
             cells = []
             for label in columns:
                 cell = row.cells[label] if label is not None else None
-                cells.append("?" if frozen or cell is None else f"?{cell.pending}" if cell.pending else
+                cells.append("?" if cell is None or cell.unresolved else f"?{cell.pending}" if cell.pending else
                              ("+" + (str(cell.tries - 1) if cell.tries > 1 else "") + f"\n{cell.solve_time}")
                              if cell.solved else f"-{cell.tries}" if cell.tries else "—")
-            table.add_row(rank, Text(row.name), "—" if frozen else str(row.solved),
-                          "—" if frozen else str(row.penalty), *cells)
+            table.add_row(rank, Text(row.name), str(row.solved) if row.results_complete else "—",
+                          str(row.penalty) if row.results_complete else "—", *cells)
         return table
 
     def __rich_console__(self, console, options):

@@ -5,9 +5,11 @@ import math
 
 from .models import Cell, Contest, Reference, TeamScore
 from .parsing import js_value
+from .scoring import statistics
 
 
-def reference_from_html(html: str, contest: Contest, *, released: bool = False) -> Reference:
+def reference_from_html(html: str, contest: Contest, *, released: bool = False,
+                        elapsed: float | None = None) -> Reference:
     def unavailable(reason):
         return Reference(released=released, message="QOJ reference unavailable: " + reason)
 
@@ -41,6 +43,7 @@ def reference_from_html(html: str, contest: Contest, *, released: bool = False) 
             return unavailable("a non-VP team is missing its problem results.")
         cells = {label: Cell() for label in labels}
         points = 0
+        unsafe = []
         items = values.items() if isinstance(values, dict) else enumerate(values)
         for index, col in items:
             if not str(index).isdigit() or int(index) >= len(labels):
@@ -59,15 +62,41 @@ def reference_from_html(html: str, contest: Contest, *, released: bool = False) 
             cells[label] = (Cell(pending=col[3] + 1) if col[5] else
                             Cell(col[3] + 1, 0, solved, int(col[1] // 60) if solved else None))
             points += col[0]
+            if (elapsed is not None and contest.rules.frozen(elapsed, released)
+                    and not col[5] and col[1] >= contest.rules.freeze_at):
+                # A result explicitly dated after the local freeze is not
+                # evidence of a pre-freeze score. Hide only that cell rather
+                # than trusting an unmasked/final response or losing the board.
+                unsafe.append(label)
         row = TeamScore(ident, name, cells, eligible=category in (0, 3),
                         penalty_minutes=contest.rules.penalty_minutes)
         if (not number(raw[0]) or not number(raw[1]) or raw[1] < 0
                 or raw[0] != points or int(raw[1] // 60) != row.penalty):
             return unavailable("team totals do not match the visible problem results.")
+        for label in unsafe:
+            row.cells[label] = Cell(unresolved=1)
         rows.append(row)
     if not any(row.eligible for row in rows):
         return unavailable("no explicitly official non-VP teams were provided.")
     # No eligibility archive, event stream or final-board completeness is
     # inferred from this view, even after the current VP has ended.
-    return Reference(rows, released=released, qoj_snapshot=True,
-                     message="QOJ 参考排名 · 当前原站快照，可能随 VP 时间截断或封榜；非原赛提交回放")
+    message = "QOJ 参考排名 · 当前公开快照，可能随 VP 时间截断；非原赛提交回放"
+    if elapsed is not None and contest.rules.frozen(elapsed, released):
+        message += " · 封榜：名次使用本人公开成绩，?N 不计 AC；提交/尝试统计含公开 ? 次数"
+    if any(cell.unresolved for row in rows for cell in row.cells.values()):
+        message += " · 越过封榜时间且未标记隐藏的单元格已局部屏蔽"
+    return Reference(rows, released=released, qoj_snapshot=True, message=message)
+
+
+def public_statistics(reference: Reference, problems: list[str]) -> dict:
+    """Count QOJ's public cells, including publicly visible ?N attempts.
+
+    A ?N does not disclose how many failures preceded the freeze. These are
+    current public attempt counts, never claimed to be pre-freeze-only counts.
+    """
+    result = statistics(reference.rows, problems)
+    for problem in problems:
+        if any(row.eligible and row.cells[problem].unresolved for row in reference.rows):
+            for key in result:
+                result[key][problem] = None
+    return result

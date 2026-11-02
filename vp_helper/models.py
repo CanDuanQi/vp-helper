@@ -143,5 +143,7 @@ class Reference:
         # A QOJ snapshot can support a labelled comparison, but must never
         # satisfy the strict original-data completion or replay flags.
         official = [row for row in self.rows if row.eligible]
+        # QOJ's ?N cells have no public AC or penalty. Their undisclosed
+        # verdicts do not invalidate the other, already public scores.
         return self.complete or (self.qoj_snapshot and bool(official) and all(
-            row.results_complete and not any(c.pending for c in row.cells.values()) for row in official))
+            row.results_complete for row in official))
