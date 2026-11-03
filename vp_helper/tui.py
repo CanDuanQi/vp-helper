@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 
 from rich import box
@@ -9,7 +10,6 @@ from rich.table import Table
 from rich.text import Text
 
 from .models import Contest, Reference, TeamScore
-from .scoring import rank_label
 
 
 PRACTICE_WRONG = "#d75f00"
@@ -153,9 +153,18 @@ class Dashboard:
         columns = self.public_columns()
         for label in ("rank", "team", "solved", "penalty", *[p or "?" for p in columns]):
             table.add_column(label, justify="left" if label == "team" else "center")
+        # Compute competition ranks once; scanning the whole board per team
+        # makes every redraw quadratic in the number of teams.
+        available = reference.rank_available
+        counts = Counter(row.rank_key for row in reference.rows if row.eligible) if available else {}
+        ranks = {}
+        position = 1
+        for key, count in sorted(counts.items()):
+            ranks[key] = ("=" if count > 1 else "") + str(position)
+            position += count
         for row in sorted(reference.rows, key=lambda row: row.sort_key):
             rank = ("*" if not row.eligible else
-                    rank_label(row, reference.rows) if reference.rank_available else "—")
+                    ranks[row.rank_key] if available else "—")
             cells = []
             for label in columns:
                 cell = row.cells[label] if label is not None else None
@@ -184,6 +193,9 @@ class TerminalDashboard:
         self.page_size = 1
         self.total_lines = 0
         self.pairs = {}
+        self._records_key = None
+        self._records_reference = None
+        self._records_lines = []
 
     def __enter__(self):
         import curses
@@ -289,6 +301,17 @@ class TerminalDashboard:
         options = self.console.options.update(width=width, height=None)
         return self.console.render_lines(renderable, options, pad=False)
 
+    def _record_lines(self, dashboard: Dashboard, width: int):
+        # Monitor snapshots are replaced on refresh, never edited in place.
+        # Keep that object alive rather than using id(), which can be reused.
+        # Copy record values so a later verdict edit also invalidates the cache.
+        key = (width, [dict(item) for item in dashboard.submissions], dashboard.public_columns())
+        if key != self._records_key or dashboard.reference is not self._records_reference:
+            self._records_lines = self._lines(dashboard.records(), width)
+            self._records_key = key
+            self._records_reference = dashboard.reference
+        return self._records_lines
+
     def _draw(self, row: int, segments, width: int, left: int = 0):
         column = 0
         for segment in segments:
@@ -316,7 +339,7 @@ class TerminalDashboard:
         content_width = min(160, width - 4)
         left = (width - content_width) // 2
         fixed = self._lines(dashboard.fixed(content_width), content_width)
-        records = self._lines(dashboard.records(), content_width)
+        records = self._record_lines(dashboard, content_width)
         self.page_size = max(1, height - len(fixed) - 2)
         self.total_lines = len(records)
         self.offset = min(self.offset, max(0, len(records) - self.page_size))
