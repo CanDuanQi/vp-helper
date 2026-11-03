@@ -277,7 +277,7 @@ class SubmissionLanguageTests(OfflineTest):
                 config = {"name": "Synthetic contest", "base_url": "https://qoj.ac/contest/2565",
                           "problems": "AB", "offset": 101, "user_agent": "test", "cookie": "fake"}
                 session = Mock()
-                session.get.return_value = SimpleNamespace(text='<input name="_token" value="fake">',
+                session.get.return_value = SimpleNamespace(text='<form id="form-answer" method="post"><input name="_token" value="fake"></form>',
                     url="https://qoj.ac/contest/2565/problem/101", raise_for_status=Mock())
                 session.post.return_value = SimpleNamespace(status_code=302, headers={"Location": "/submission/123"},
                     url="https://qoj.ac/contest/2565/problem/101")

@@ -9,6 +9,8 @@
     "curl_cffi transport for Cloudflare, with CurlMime for the multipart submission that curl_cffi's files= cannot express",
     "Resolve contest configuration beside the source or in its parent directories, with explicit missing or conflicting configuration errors",
     "Refresh a verified same-account Firefox login before submitting",
-    "Default .cpp and .cc submissions to QOJ C++23"
+    "Default .cpp and .cc submissions to QOJ C++23",
+    "Honor the redirected answer form action and its own CSRF token; validate the same-contest HTTPS destination before uploading",
+    "Report redacted explicit rejections and verify delayed receipts using GET only, without replaying the upload"
   ]
 }

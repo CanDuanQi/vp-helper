@@ -30,10 +30,11 @@ except ImportError:
     _IMPERSONATE = None
 
 import time
+import re
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 from selectolax.lexbor import LexborHTMLParser
-from vp_helper.receipts import qoj_id_from_list, qoj_submission_id, qoj_submission_ids, record_receipt
+from vp_helper.receipts import qoj_id_from_list, qoj_submission_error, qoj_submission_id, qoj_submission_ids, record_receipt
 from vp_helper.models import VPError
 from vp_helper.submit_context import submission_configuration
 from vp_helper.browser_login import refresh_submission_login
@@ -122,14 +123,24 @@ def submit(url: str, lang: str, code: str, problem: str) -> None:
         raise SystemExit('QOJ login expired. Log in to QOJ in Firefox, then run submit again.')
 
     parser = LexborHTMLParser(response.text)
-    token_node = parser.css_first('input[name="_token"]')
+    form = parser.css_first('form#form-answer')
+    if form is None or form.attributes.get('method', '').lower() != 'post':
+        raise SystemExit('QOJ did not provide a submission form; no code was sent.')
+    origin = 'https://' + urlsplit(contest_base_url).netloc
+    post_url = urljoin(response.url, form.attributes.get('action') or response.url)
+    target = urlsplit(post_url)
+    problem_path = urlsplit(url).path.rstrip('/')
+    if (target.scheme != 'https' or target.netloc != urlsplit(origin).netloc
+            or not re.fullmatch(re.escape(problem_path) + r'(?:/statement/[A-Za-z0-9_-]+)?/?', target.path)):
+        raise SystemExit('QOJ returned an unexpected submission destination; no code was sent.')
+    token_node = form.css_first('input[name="_token"]')
     dynamic_token = ''
 
     if token_node:
         dynamic_token = token_node.attributes.get('value', '')
 
     if not dynamic_token:
-        raise RuntimeError('Failed to get token')
+        raise SystemExit('QOJ did not provide the submission form token; no code was sent.')
 
     # Some QOJ versions redirect to the submissions list instead of to an
     # assigned ID. Capture the old IDs so an old submission cannot look new.
@@ -151,22 +162,35 @@ def submit(url: str, lang: str, code: str, problem: str) -> None:
     }
 
     submitted_at = time.time()
+    session.headers.update({'Referer': response.url})
     try:
-        submit_response = post_form(session, url, payload_files)
+        submit_response = post_form(session, post_url, payload_files)
     except _RequestException:
         raise SystemExit('Server confirmation unavailable. Check the submissions page before retrying.') from None
-    origin = 'https://' + urlsplit(contest_base_url).netloc
+    error = qoj_submission_error(submit_response, secrets=(dynamic_token, cookie))
+    if error:
+        raise SystemExit('QOJ rejected the submission: ' + error)
     sid = qoj_submission_id(submit_response, origin)
-    target = urljoin(url, submit_response.headers.get('Location', ''))
+    target = urljoin(post_url, submit_response.headers.get('Location', ''))
     destination = urlsplit(target)
-    if (sid is None and previous is not None and submit_response.status_code in (302, 303)
-            and destination.netloc == urlsplit(origin).netloc and destination.scheme == 'https'
-            and destination.path in ('/submissions', urlsplit(contest_base_url).path + '/submissions')):
-        current = session.get(contest_base_url + '/submissions', params={'submitter': handle, 'locale': 'en'}, timeout=(10, 40))
-        if current.status_code == 200:
-            sid = qoj_id_from_list(current.text, previous, contest_base_url, urlsplit(url).path.rsplit('/', 1)[-1], handle)
+    if (sid is None and previous is not None and (submit_response.status_code == 200
+            or (submit_response.status_code in (302, 303)
+                and destination.netloc == urlsplit(origin).netloc and destination.scheme == 'https'
+                and destination.path in ('/submissions', urlsplit(contest_base_url).path + '/submissions')))):
+        for delay in (0, 1, 2):
+            if delay:
+                time.sleep(delay)
+            try:
+                current = session.get(contest_base_url + '/submissions', params={'submitter': handle, 'locale': 'en'}, timeout=(10, 40))
+            except _RequestException:
+                continue
+            if current.status_code == 200:
+                sid = qoj_id_from_list(current.text, previous, contest_base_url, urlsplit(url).path.rsplit('/', 1)[-1], handle)
+            if sid:
+                break
     if sid is None:
-        raise SystemExit('Submission was not confirmed. Check the submissions page before retrying.')
+        raise SystemExit(f'Submission was not confirmed (HTTP {submit_response.status_code}). '
+                         'No automatic retry was sent. Check the submissions page before retrying.')
     print(f'Submission #{sid}: PENDING', flush=True)
     try:
         record_receipt(contest, sid, problem, submitted_at)

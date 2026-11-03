@@ -1,3 +1,3 @@
 """QOJ/Gym virtual contest helper."""
 
-__version__ = "0.1.16+cdq.6"
+__version__ = "0.1.16+cdq.7"

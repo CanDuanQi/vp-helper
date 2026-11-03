@@ -73,11 +73,44 @@ class ReceiptReader:
 def qoj_submission_id(response, origin: str) -> str | None:
     """A success response must actually identify the newly created submission."""
     from urllib.parse import urljoin
-    target = (urljoin(origin, response.headers.get("Location", ""))
+    base = response.url if isinstance(response.url, str) else origin
+    target = (urljoin(base, response.headers.get("Location", ""))
               if response.status_code in (302, 303) else response.url if response.status_code == 200 else "")
     parts = urlsplit(target)
     match = re.fullmatch(r"/submission/([0-9]+)/?", parts.path)
     return match[1] if parts.scheme == "https" and parts.netloc == urlsplit(origin).netloc and match else None
+
+
+def qoj_submission_error(response, *, secrets: tuple[str, ...] = ()) -> str:
+    """Retain explicit server rejections without dumping forms or source code."""
+    def clean(value):
+        for secret in secrets:
+            if secret:
+                value = value.replace(secret, "[redacted]")
+        return value[:500]
+
+    if response.status_code >= 500:
+        return ""  # A gateway/server failure does not prove the POST failed.
+    text = getattr(response, "text", "")
+    soup = BeautifulSoup(text if isinstance(text, str) else "", "html.parser")
+    for node in soup.select("script, style, .uoj-article"):
+        node.decompose()
+    errors = soup.select(".alert-danger, .has-error .help-block, .uoj-error")
+    if errors:
+        return clean(" ".join(node.get_text(" ", strip=True) for node in errors))
+    for node in soup.select("form, nav, header, footer, table, textarea, pre, code"):
+        node.decompose()
+    title = soup.title.get_text(" ", strip=True) if soup.title else ""
+    content = soup.select_one(".uoj-content, main, #content") or soup
+    message = content.get_text(" ", strip=True)
+    if (re.match(r"^(?:Error|错误|出错)(?:\b|\s|[-:：])", title, re.I)
+            or re.search(r"this page has expired|the form is incomplete|invalid csrf token", message, re.I)
+            or re.match(r"^(?:Message|Notice|消息|提示)(?:\b|\s|[-:：])", title, re.I)
+            and re.search(r"denied|not allowed|cannot|failed|too (?:fast|many)|already (?:accepted|solved)|拒绝|失败|过快|频繁", message, re.I)):
+        return clean(message or title)
+    if response.status_code >= 400:
+        return f"QOJ returned HTTP {response.status_code}."
+    return ""
 
 
 def qoj_submission_ids(html: str) -> set[str]:
