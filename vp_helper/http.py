@@ -118,7 +118,11 @@ class WebSession:
                 time.sleep(_RETRY_BACKOFF * 2 ** (attempt - 1))
             try:
                 r = self.session.get(url, timeout=(10, 40), **kwargs)
-                if (not refreshed and r.status_code == 200
+                # An expired judge session may redirect to a login page that
+                # Cloudflare then blocks with 403. The final status need not
+                # be 200 for a same-site login redirect to warrant recovery.
+                if (not refreshed and r.status_code in (200, 401, 403)
+                        and host == urlsplit(self.origin).hostname == urlsplit(r.url).hostname
                         and urlsplit(r.url).path in ("/login", "/enter")):
                     refreshed = True
                     if self._refresh_browser(force=True):
@@ -151,12 +155,6 @@ class WebSession:
         return self.check(r)
 
     def check(self, r):
-        if r.status_code != 200:
-            raise VPError(f"{urlsplit(r.url).hostname} returned HTTP {r.status_code}")
-        if urlsplit(r.url).path in ("/login", "/enter"):
-            if self.account.get("cookie_source") == "manual":
-                raise VPError("Login session expired; update the account cookie in ~/.config/vp/config.json.")
-            raise VPError("Login session expired. Log in to this site in Firefox, then run the command again.")
         # Cloudflare's interstitial is only meaningful for textual responses.
         # A PDF or other binary body must not be decoded here: requests happens
         # to tolerate it, but curl_cffi reports such a response with a non-codec
@@ -169,6 +167,12 @@ class WebSession:
                 body = ""
             if "Just a moment..." in body or "cf-chl-" in body:
                 raise VPError("The platform requests browser verification; refresh the login session in the Ubuntu browser.")
+        if urlsplit(r.url).path in ("/login", "/enter") and r.status_code in (200, 401, 403):
+            if self.account.get("cookie_source") == "manual":
+                raise VPError("Login session expired; update the account cookie in ~/.config/vp/config.json.")
+            raise VPError("Login session expired. Log in to this site in Firefox; the monitor will retry automatically.")
+        if r.status_code != 200:
+            raise VPError(f"{urlsplit(r.url).hostname} returned HTTP {r.status_code}")
         return r
 
     def soup(self, url: str, **kwargs) -> BeautifulSoup:

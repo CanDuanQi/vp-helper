@@ -368,6 +368,16 @@ class TransportTests(OfflineStartTest):
             web.post(URL, {"_token": "fake"})
         self.assertEqual(web.session.post.call_count, 1)
 
+    def test_blocked_login_post_is_never_retried_or_refreshed(self):
+        web = self.web()
+        web.session.post.return_value = response("Just a moment...", status=403, url="https://qoj.ac/login")
+        with patch.object(web, "_refresh_browser") as refresh:
+            with self.assertRaisesRegex(VPError, "browser verification"):
+                web.post(URL, {"_token": "fake"})
+        refresh.assert_not_called()
+        web.session.post.assert_called_once()
+        web.session.get.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

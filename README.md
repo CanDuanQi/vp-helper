@@ -2,7 +2,7 @@
 
 Ubuntu 上的 XCPC 虚拟参赛终端助手，支持 QOJ、Codeforces ICPC 比赛和 Codeforces Gym。上方显示成绩与完整提交记录，下方保留比赛目录中的普通 shell。
 
-当前版本：0.1.16+cdq.8（CanDuanQi 修改版，基于上游 0.1.16）。
+当前版本：0.1.16+cdq.9（CanDuanQi 修改版，基于上游 0.1.16）。
 
 ## 本 Fork 的修改
 
@@ -18,6 +18,7 @@ Ubuntu 上的 XCPC 虚拟参赛终端助手，支持 QOJ、Codeforces ICPC 比�
 - 内置 QOJ 提交器对 `.cpp`、`.cc` 默认使用 `C++23`；`.py` 仍使用 `PyPy3`。使用方法仍为 `submit A.cpp`，语言会显示在提交确认信息中。
 - QOJ 提交遵循题目页跳转后的实际提交表单地址（包括 `/statement/zh_cn` 等语言页面），只使用该表单的 Token。每次最多上传一次；回执延迟时仅以 GET 查询新提交编号，明确拒绝会显示脱敏原因，无法确认时提示先查网页，避免重复提交。
 - Firefox 自动配置识别新增 `~/.mozilla/firefox-esr/`，兼容 `profiles.ini` 的相对和绝对路径、默认配置及 sudo 原用户识别。
+- 长时间运行的监控遇到登录过期时，即使登录页被验证拦截并返回 401/403，也会核对 Firefox 的同账号登录并仅重试一次只读查询。浏览器验证拦截会显示明确提示；无法恢复时保留已有判定并标注同步过期，不推测最终结果。支持超过 24 小时的赛后补题记录，补题不计入比赛成绩；启动 VP 和代码上传请求仍不自动重发。
 - 优化 QOJ 参考榜单渲染：一次计算整榜并列名次，复用未变化的提交记录和榜单排版；计时刷新和滚动不再重排整榜。新榜单、判定变化、窗口宽度变化及题号揭示会重新排版，封榜和原赛排名规则保持不变。
 - 增加 `vp --version` 和无需 sudo 的用户目录安装，方便确认正在使用本 Fork。
 
@@ -71,7 +72,7 @@ vp --version
 ```bash
 type -a vp submit
 readlink -f "$(command -v vp)"
-vp --version  # VP Helper 0.1.16+cdq.8
+vp --version  # VP Helper 0.1.16+cdq.9
 ```
 
 ## 使用
