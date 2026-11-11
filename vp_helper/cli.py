@@ -24,6 +24,7 @@ from .history_lines import enrich_history
 from .parsing import contest_url, contest_id_url
 from .qoj_snapshot import public_statistics as qoj_public_statistics
 from .receipts import ReceiptReader
+from .resume_context import resume_state
 from .scoring import medal_lines, rank_of, rank_label, prize_of, recent_submissions, revealed_problems, score_submissions, statistics, submission_history
 from .storage import config_directory, desktop, file_lock, read_history, read_json, state_directory, update_history, write_json
 from .tui import display, TerminalDashboard
@@ -123,13 +124,18 @@ def configure_submit(api, contest: Contest, directory: Path) -> None:
         else:
             raise VPError("The Gym submit script's configuration format must be connected before a native VP is started.")
     if bundled:
-        tool = Path(sys.prefix).parent / "third_party" / ("qoj" if contest.platform == "qoj" else "cf_submit") / "submit"
-        if not tool.is_file() or not os.access(tool, os.X_OK):
-            raise VPError(f"The bundled {contest.platform} submit script is missing; reinstall vp.")
-        temporary = selected.with_name("submit.new")
-        temporary.unlink(missing_ok=True)
-        temporary.symlink_to(tool)
-        os.replace(temporary, selected)
+        select_bundled_submit(contest.platform)
+
+
+def select_bundled_submit(platform: str) -> None:
+    selected = state_directory() / "submit"
+    tool = Path(sys.prefix).parent / "third_party" / ("qoj" if platform == "qoj" else "cf_submit") / "submit"
+    if not tool.is_file() or not os.access(tool, os.X_OK):
+        raise VPError(f"The bundled {platform} submit script is missing; reinstall vp.")
+    temporary = selected.with_name("submit.new")
+    temporary.unlink(missing_ok=True)
+    temporary.symlink_to(tool)
+    os.replace(temporary, selected)
 
 
 def bind_submit_context(directory: Path, state_path: Path, state: dict) -> None:
@@ -263,6 +269,30 @@ def start(url: str) -> None:
     # Release the cross-shell preparation lock before entering an attached TUI.
     path, state = prepare_start(url)
     bind_submit_context(Path(state["directory"]), path, state)
+    open_session(path, state)
+
+
+def resume() -> None:
+    if sys.platform != "linux" or not sys.stdin.isatty():
+        raise VPError("Run vp resume in an interactive Ubuntu terminal.")
+    if shutil.which("tmux") is None:
+        raise VPError("tmux is missing; run the installer.")
+    with file_lock(state_directory() / "start.lock"):
+        path, state = resume_state()
+        platform = state["contest"]["platform"]
+        config = read_json(config_directory() / "config.json")
+        if not isinstance(config, dict):
+            raise VPError("The account configuration is invalid; restore this VP's account before resuming it.")
+        account = config.get("qoj", {}) if platform == "qoj" else config.get(platform, config.get("gym", {}))
+        if not isinstance(account, dict) or account.get("handle") != state["handle"]:
+            raise VPError("The configured account changed; restore this VP's account before resuming it.")
+        script = account.get("submit_script") or shutil.which("submit")
+        if script and Path(script).is_symlink() and Path(os.readlink(script)) == state_directory() / "submit":
+            select_bundled_submit(platform)
+    open_session(path, state)
+
+
+def open_session(path: Path, state: dict) -> None:
     if tmux_exists(state["tmux_session"]):
         pane = state["tmux_session"] + ":0.0"
         dead = subprocess.run(["tmux", "display-message", "-p", "-t", pane, "#{pane_dead}"],
@@ -419,6 +449,8 @@ def main() -> None:
             console.print("VP Helper " + __version__, markup=False)
         elif args == ["history"]:
             history()
+        elif args == ["resume"]:
+            resume()
         elif len(args) == 2 and args[0] == "_monitor":
             monitor(Path(args[1]))
         elif len(args) == 2 and args[0] in ("cf", "qoj", "gym"):
@@ -426,9 +458,9 @@ def main() -> None:
         elif len(args) == 1 and args[0] not in ("-h", "--help"):
             start(args[0])
         elif args in ([], ["-h"], ["--help"]):
-            console.print("Usage: vp cf ID\n       vp qoj ID\n       vp gym ID\n       vp CONTEST_URL\n       vp history\n       vp --version", markup=False)
+            console.print("Usage: vp cf ID\n       vp qoj ID\n       vp gym ID\n       vp CONTEST_URL\n       vp resume\n       vp history\n       vp --version", markup=False)
         else:
-            raise VPError("Usage: vp cf ID, vp qoj ID, vp gym ID or vp history")
+            raise VPError("Usage: vp cf ID, vp qoj ID, vp gym ID, vp resume or vp history")
     except (VPError, OSError, subprocess.CalledProcessError) as exc:
         console.print("vp: " + str(exc), style="red", markup=False)
         raise SystemExit(1) from None
